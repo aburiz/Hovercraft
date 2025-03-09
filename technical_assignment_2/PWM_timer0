@@ -6,9 +6,6 @@
 double dutyCycle = 0;
 
 void pwm_init(void) {
-    
-    // set PD6 as output
-    DDRD = (1 << PORTD6);
 
     // set fast PWM mode
     TCCR0A = (1 << COM0A1) | (1 << WGM00) | (1 << WGM01);
