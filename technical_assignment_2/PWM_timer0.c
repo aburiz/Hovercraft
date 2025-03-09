@@ -1,34 +1,50 @@
-#define F_CPU 16000000UL 
-
 #include <avr/io.h>
-#include <avr/interrupt.h>
+#include <util/delay.h>
 
-double dutyCycle = 0;
+#define SERVO_MIN 1000  // 1ms pulse width (0° position)
+#define SERVO_MAX 2000  // 2ms pulse width (180° position)
 
-void pwm_init(void) {
+double servo_angle = 90; // Start at center position
 
-    // set fast PWM mode
-    TCCR0A = (1 << COM0A1) | (1 << WGM00) | (1 << WGM01);
-    TIMSK0 = (1 << TOIE0);
+void setServoAngle(double angle) {
 
-    // calculate TON from duty cycle
-    OCR0A = (dutyCycle/100) * 255;
-
-    // enable external interrupts
-    sei();
-
-    // set prescaler to 1, start timer
-    TCCR0B = (1 << CS00);
+    if (angle < 9 || angle > 171) { // If outside ±81° range
+        OCR1A = (angle < 9) ? SERVO_MIN : SERVO_MAX; // Set to min/max
+        PORTB |= (1 << PORTB5);  // Turn LED ON (PB5)
+    } else {
+        OCR1A = SERVO_MIN + ((angle / 180.0) * (SERVO_MAX - SERVO_MIN)); // Calculate PWM
+        PORTB &= ~(1 << PORTB5); // Turn LED OFF (PB5)
+    }
 }
 
-ISR(TIMER0_OVF_vect) {
+void init_servo(void) {
+    DDRB |= (1 << PB1) | (1 << PB5); // Set PB1 (OC1A) as output
 
-    OCR0A = (dutyCycle/100) * 255;
+    // Configure Timer1 for Fast PWM (Mode 14)
+    TCCR1A = (1 << COM1A1) | (1 << WGM11);
+    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11); // Prescaler = 8
+
+    // Set PWM frequency to 50 Hz
+    ICR1 = 40000; 
+
+    // Start at 90° (middle position)
+    setServoAngle(servo_angle);
 }
 
 int main(void) {
+    init_servo();
 
-    while(1) {
-
+    while (1) {
+        // Move servo from 0° to 180° in small steps
+        for (int i = 0; i <= 180; i++) {
+            setServoAngle(i);
+            _delay_ms(10); // Wait for the servo to reach the position
+        }
+        
+        // Move servo back from 180° to 0° in small steps
+        for (int i = 180; i >= 0; i--) {
+            setServoAngle(i);
+            _delay_ms(10); // Wait for the servo to reach the position
+        }
     }
 }
