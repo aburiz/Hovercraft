@@ -2,6 +2,63 @@
 #include <MPU6050.h>
 #include "UART.c"
 
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <stdio.h>
+#include <math.h>
+
+/********************************************************************************
+************************************* UART **************************************
+*********************************************************************************/
+
+// for serial communication (UART)
+#define F_CPU 16000000UL 
+#define baud 9600
+#define ubrr ((F_CPU / (16UL * baud)) - 1)
+
+void init_uart(){
+    // setting baud rate with UBRR0
+    UBRR0H = (uint8_t)(ubrr >> 8);
+    UBRR0L = (uint8_t)ubrr;
+    // setting UART to transmission
+    UCSR0B = (1 << TXEN0);
+    // setting UART to 8-bit character size for transmission
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+  }
+
+  void transmit_uart(char data){
+    while(!(UCSR0A & (1<<UDRE0))); // wait for transmission to be empty (flag to be 1)
+    UDR0 = data; // transmit data
+  }
+
+  void print_message(const char *message){ //using UART
+    while(*message){ 
+      transmit_uart(*message++);
+    }
+  }
+
+  void print_number(uint16_t number){
+    char string_num[8]; // max number in 16 bits is 6 bits long + 2 bits for space
+    uint8_t i = 0;
+  
+    if(number == 0){
+      transmit_uart('0');
+      return;
+    }
+  
+    //only positive value readings from the IR sensor
+    // convert number into string, store in string_num
+    while(number > 0){
+      string_num[i++] = (number%10) + '0'; // store last digit it in ASCII
+      number /= 10; 
+    }
+  
+    // transmit (print) each character in the string number array
+    while(i>0){
+      transmit_uart(string_num[--i]);
+    }
+  }
+
 /********************************************************************************
 ************************************* MPU6050 ***********************************
 *********************************************************************************/
