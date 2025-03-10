@@ -63,14 +63,14 @@ void print_number(int16_t number){
 *********************************** MPU6050 *************************************
 *********************************************************************************/
 
-#define YAW_MAX 81   // Maximum allowed yaw (degrees)
-#define YAW_MIN -81  // Minimum allowed yaw (degrees)
+#define YAW_MAX 81   // Maximum allowed yaw degrees
+#define YAW_MIN -81  // Minimum allowed yaw degrees
 #define ACC_THRESHOLD_LOW  0.12   // Below this (g): LED off
 #define ACC_THRESHOLD_HIGH 1.12    // Above this (g): LED fully on
 
 // --- Sensor conversion factors ---
 #define ACCEL_SENSITIVITY 16384.0  // For ±2g mode (LSB/g)
-#define GYRO_SENSITIVITY  131.0     // For ±250°/sec mode (LSB/(°/sec))
+#define GYRO_SENSITIVITY  131.0     // For ±250°/sec mode (LSB/(degree/sec))
 
 #define RADS 57.2958
 
@@ -80,7 +80,7 @@ const float VELOCITY_THRESHOLD = 0.01;     // Deadband for velocity (m/s)
 
 MPU6050 mpu;
 
-// Orientation (in radians)
+// Orientation in radians
 float fusedRoll = 0.0, fusedPitch = 0.0, fusedYaw = 0.0;
 bool firstOrientation = true;
 unsigned long lastTimeOrientation = 0;
@@ -93,7 +93,7 @@ unsigned long lastDistanceTime = 0;
 // Accelerometer bias for X axis (in g's)
 float accelBiasX = 0.0;
 
-// Output interval (ms)
+// Output interval in ms
 const unsigned long OUTPUT_INTERVAL = 1000;
 unsigned long lastOutputTime = 0;
 
@@ -107,7 +107,7 @@ float a_world_x;
 
 int16_t ax, ay, az, gx, gy, gz;
 
-// --- Accelerometer Calibration (X-axis) ---
+// Accelerometer Calibration (X-axis) 
 void calibrate_accelerometer() {
     
     const int numSamples = 100;
@@ -146,7 +146,7 @@ void compute_angles() {
     accPitch = atan2(-ax_corr, sqrt(ay_corr * ay_corr + az_corr * az_corr));
 }
 
-// --- Sensor Fusion for Displacement ---
+// Sensor Fusion for Displacement 
 void sensor_fusion() {
 
     // Convert corrected accelerometer readings to m/s²
@@ -167,7 +167,7 @@ void sensor_fusion() {
     // Rotate horizontal (x-y) linear acceleration by fused yaw to align with world X–axis
     a_world_x = ax_lin * cos(fusedYaw) - ay_lin * sin(fusedYaw);
 
-    // --- Distance Integration (Trapezoidal with Zero Velocity Update) ---
+    // Distance Integration (Trapezoidal with Zero Velocity Update) 
     unsigned long currentDistanceTime = ms();
     float dtDistance = (currentDistanceTime - lastDistanceTime) / 1000.0;
     lastDistanceTime = currentDistanceTime;
@@ -301,7 +301,7 @@ int main() {
     calibrate_accelerometer();
 
     while (1) {
-        // --- Orientation Update ---
+        // Orientation Update 
         unsigned long currentTime = ms();
         float dt = (currentTime - lastTimeOrientation) / 1000.0;
         if (dt <= 0) dt = 0.01;
@@ -313,7 +313,7 @@ int main() {
         corr_gyro_readings();
         compute_angles();
 
-        // Complementary filter for roll and pitch; integrate gyro for yaw
+        // Complementary filter for roll and pitch, integrate gyro for yaw
         if (firstOrientation) {
             fusedRoll = accRoll;
             fusedPitch = accPitch;
@@ -325,13 +325,13 @@ int main() {
             fusedYaw = fusedYaw + gyroZ * dt;  // Yaw from gyro integration only
         }
 
-        // --- Servo Control Based on Yaw ---
+        // Servo Control Based on Yaw
         yaw_deg = fusedYaw * RADS;   
         setServoAngle(yaw_deg);
 
         sensor_fusion();
 
-        // --- Output Data Once Per Second ---
+        // Output Data Once Per Second 
         if (counter >= 50) {
             counter = 0;
             print_message("Roll: "); Serial.print(fusedRoll * RADS, 2);
