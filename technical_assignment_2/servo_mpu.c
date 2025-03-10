@@ -3,6 +3,28 @@
 #include "UART.c"
 
 /********************************************************************************
+************************************* MPU6050 ***********************************
+*********************************************************************************/
+
+MPU6050 mpu;
+int16_t ax, ay, az, gx, gy, gz;
+double yaw = 0;
+
+void init_mpu(void) {
+    
+    Wire.begin();
+    print_message("Initializing MPU6050...."); print_message("\n");
+    mpu.initialize();
+
+    if (mpu.testConnection()) {
+        print_message("MPU6050 connection successful."); print_message("\n");
+    } else {
+        print_message("MPU6050 connection failed. Check wiring and ensure AD0 is connected to ground."); print_message("\n");
+        while (1); // Halt execution if sensor is not found.
+    }
+}
+
+/********************************************************************************
 *********************************** SERVO MOTOR *********************************
 *********************************************************************************/
 
@@ -42,28 +64,12 @@ void init_servo(void) {
 }
 
 ISR(TIMER1_OVF_vect) {
-    counter++;
-}
-
-/********************************************************************************
-************************************* MPU6050 ***********************************
-*********************************************************************************/
-
-MPU6050 mpu;
-int16_t ax, ay, az, gx, gy, gz;
-
-void init_mpu(void) {
     
-    Wire.begin();
-    print_message("Initializing MPU6050...."); print_message("\n");
-    mpu.initialize();
+    counter++;
 
-    if (mpu.testConnection()) {
-        print_message("MPU6050 connection successful."); print_message("\n");
-    } else {
-        print_message("MPU6050 connection failed. Check wiring and ensure AD0 is connected to ground."); print_message("\n");
-        while (1); // Halt execution if sensor is not found.
-    }
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    yaw = yaw + gz*(1/50);
+    setServoAngle(yaw);
 }
 
 int main(void) {
@@ -73,7 +79,6 @@ int main(void) {
     init_mpu();
 
     while (1) {
-        mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
         
         if (counter >= 50) {
             counter = 0;
