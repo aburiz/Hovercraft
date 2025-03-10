@@ -7,6 +7,9 @@
 #include <MPU6050.h>
 #include <util/delay.h>
 
+#define DEG_TO_RADS 3.141592653/180
+#define RAD_TO_DEGS 180/3.141592653
+
 /********************************************************************************
 *********************************** UART ****************************************
 *********************************************************************************/
@@ -71,7 +74,6 @@ void print_number(double number) {
         transmit_uart((decimal_part / j) % 10 + '0');
     }
 }
-
 
 /********************************************************************************
 *********************************** LED *************************************
@@ -141,8 +143,6 @@ double map(double x, double in_min, double in_max, double out_min, double out_ma
 
 #define YAW_MAX 81   // Maximum allowed yaw (degrees)
 #define YAW_MIN -81  // Minimum allowed yaw (degrees)
-#define ACC_THRESHOLD_LOW  0.12   // Below this (g): LED off
-#define ACC_THRESHOLD_HIGH 1.12    // Above this (g): LED fully on
 
 // --- Sensor conversion factors ---
 #define ACCEL_SENSITIVITY 16384.0  // For ±2g mode (LSB/g)
@@ -172,14 +172,6 @@ float accelBiasX = 0.0;
 // Output interval (ms)
 const unsigned long OUTPUT_INTERVAL = 1000;
 unsigned long lastOutputTime = 0;
-
-float ax_corr, ay_corr, az_corr, accRoll, accPitch;
-float gyroX, gyroY, gyroZ;
-float yaw_deg;
-float ax_mps2, ay_mps2, az_mps2;
-float g_sensor_x, g_sensor_y, g_sensor_z;
-float ax_lin, ay_lin;
-float a_world_x;
 
 // --- Accelerometer Calibration (X-axis) ---
 void calibrate_accelerometer() {
@@ -249,20 +241,17 @@ ISR(TIMER1_OVF_vect) {
 /********************************************************************************
 ************************************** MILLIS() *********************************
 *********************************************************************************/
-
 volatile uint32_t milliseconds = 0;
 
-void init_ms_timer(){ 
+void init_ms_timer() {
 
-    TCCR0A |= (1 << COM0A1) | (1 << WGM01);
-    OCR0A = 249;
-    
-    // Enable Timer0 Compare Match A Interrupt
-    TIMSK0 |= (1 << OCIE0A);
+    TCCR0A = (1 << WGM01);  // Enable CTC mode
+    OCR0A = (F_CPU / (64 * 1000)) - 1;            // Set compare match for 1ms
 
-    sei();
+    TIMSK0 |= (1 << OCIE0A); // Enable Timer0 Compare Match A Interrupt
+    TCCR0B |= (1 << CS01) | (1 << CS00); // Start Timer0 with Prescaler 64
 
-    TCCR0B |= (1 << CS01) | (1 << CS00);
+    sei(); // Enable global interrupts AFTER starting timer
 }
 
 ISR(TIMER0_COMPA_vect) {
@@ -285,6 +274,7 @@ uint32_t ms() {
 void setup(){
   initialize_uart();
   initialize_led();
+  init_ms_timer();
   init_servo();
   Wire.begin();
   
@@ -316,18 +306,19 @@ void loop(){
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
   // Correct accelerometer readings (in g's)
-  ax_corr = (ax / ACCEL_SENSITIVITY) - accelBiasX;
-  ay_corr = (ay / ACCEL_SENSITIVITY);
-  az_corr = (az / ACCEL_SENSITIVITY);
+  float ax_corr = (ax / ACCEL_SENSITIVITY) - accelBiasX;
+  float ay_corr = (ay / ACCEL_SENSITIVITY);
+  float az_corr = (az / ACCEL_SENSITIVITY);
 
   // Gyro readings in deg/s, convert to rad/s
-  gyroX = (gx / GYRO_SENSITIVITY) * RADS;
-  gyroY = (gy / GYRO_SENSITIVITY) * RADS;
-  gyroZ = (gz / GYRO_SENSITIVITY) * RADS;
+  float gyroX = (gx / GYRO_SENSITIVITY) * DEG_TO_RADS;
+  float gyroY = (gy / GYRO_SENSITIVITY) * DEG_TO_RADS;
+  float gyroZ = (gz / GYRO_SENSITIVITY) * DEG_TO_RADS;
 
   // Compute accelerometer-based angles (in radians)
-  accRoll = atan2(ay_corr, az_corr);
-  accPitch = atan2(-ax_corr, sqrt(ay_corr * ay_corr + az_corr * az_corr));
+  float accRoll = atan2(ay_corr, az_corr);
+  float accPitch = atan2(-ax_corr, sqrt(ay_corr * ay_corr + az_corr * az_corr));
+
 
   // Complementary filter for roll and pitch; integrate gyro for yaw
   if (firstOrientation) {
@@ -342,27 +333,27 @@ void loop(){
   }
 
   // --- Servo Control Based on Yaw ---
-  yaw_deg = fusedYaw * RADS;   
+  float yaw_deg = fusedYaw * RAD_TO_DEG;   
   setServoAngle(yaw_deg);
 
   // --- Sensor Fusion for Displacement ---
   // Convert corrected accelerometer readings to m/s²
-  ax_mps2 = ax_corr * 9.81;
-  ay_mps2 = ay_corr * 9.81;
-  az_mps2 = az_corr * 9.81;
+  float ax_mps2 = ax_corr * 9.81;
+  float ay_mps2 = ay_corr * 9.81;
+  float az_mps2 = az_corr * 9.81;
 
   // Compute expected gravity vector in sensor frame from fused roll and pitch
-  g_sensor_x = -sin(fusedPitch) * 9.81;
-  g_sensor_y = sin(fusedRoll) * cos(fusedPitch) * 9.81;
-  g_sensor_z = cos(fusedRoll) * cos(fusedPitch) * 9.81;
+  float g_sensor_x = -sin(fusedPitch) * 9.81;
+  float g_sensor_y = sin(fusedRoll) * cos(fusedPitch) * 9.81;
+  float g_sensor_z = cos(fusedRoll) * cos(fusedPitch) * 9.81;
 
   // Subtract gravity to obtain linear acceleration (sensor frame)
-  ax_lin = ax_mps2 - g_sensor_x;
-  ay_lin = ay_mps2 - g_sensor_y;
+  float ax_lin = ax_mps2 - g_sensor_x;
+  float ay_lin = ay_mps2 - g_sensor_y;
   // We'll use only the horizontal components for displacement
 
   // Rotate horizontal (x-y) linear acceleration by fused yaw to align with world X–axis
-  a_world_x = ax_lin * cos(fusedYaw) - ay_lin * sin(fusedYaw);
+  float a_world_x = ax_lin * cos(fusedYaw) - ay_lin * sin(fusedYaw);
 
   // --- Distance Integration (Trapezoidal with Zero Velocity Update) ---
   unsigned long currentDistanceTime = ms();
@@ -376,7 +367,7 @@ void loop(){
       newVelocityX = 0.0;
 
   // Zero velocity update: if acceleration remains near zero for a period, reset velocity
-  const float ACCEL_DRIFT_THRESHOLD = 0.05; // m/s² threshold for stationary detection
+  const float ACCEL_DRIFT_THRESHOLD = 0.05; // m/s^2 threshold for stationary detection
   static float stationaryTime = 0.0;
   if (fabs(a_world_x) < ACCEL_DRIFT_THRESHOLD)
     stationaryTime += dtDistance;
@@ -398,10 +389,12 @@ void loop(){
   // --- Output Data Once Per Second ---
   if (counter >= 50) {
       counter = 0;
-      // print_message("Roll: "); print_number(fusedRoll * RADS);
-      // print_message("\tPitch: "); print_number(fusedPitch * RADS);
-      print_message("\tYaw: "); print_number(yaw_deg);
-      print_message("\tAccX: "); print_number(ax_corr);
+      // print_message("Roll: "); print_number(fusedRoll * RAD_TO_DEG);
+      // print_message("\tPitch: "); print_number(fusedPitch * RAD_TO_DEG);
+      print_message("\t AccX: "); print_number(ax_corr);
+      print_message("\t Yaw: "); print_number(yaw_deg);
+      print_message("\t millis: "); print_number(millis());
+      print_message("\t ours: "); print_number(ms());
       print_message("\n");
       // print_message("\tAccY: "); print_number(ay_corr);
       // print_message("\tAccZ: "); print_number(az_corr);
