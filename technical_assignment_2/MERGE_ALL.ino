@@ -145,10 +145,15 @@ double map(double x, double in_min, double in_max, double out_min, double out_ma
 #define YAW_MIN -81  // Minimum allowed yaw (degrees)
 
 // --- Sensor conversion factors ---
-#define ACCEL_SENSITIVITY 16384.0  // For ±2g mode (LSB/g)
-#define GYRO_SENSITIVITY  131.0     // For ±250°/sec mode (LSB/(°/sec))
+double ACCEL_SENSITIVITY = 0; 
+double GYRO_SENSITIVITY  = 0;     
 
 #define RADS 57.2958
+
+#define accRange 2
+#define gyroRange 250
+
+double x = 0.0; // for distance calculation
 
 // --- Filter and integration constants ---
 const float compFilterAlpha = 0.98;  // Complementary filter weight for gyro
@@ -210,7 +215,7 @@ void setServoAngle(double angle) {
         OCR1A = SERVO_MAX;
         PORTB |= (1 << PORTB5);
     } else {
-        OCR1A = SERVO_MIN + ((angle / 180.0) * (SERVO_MAX - SERVO_MIN)); // Calculate PWM
+        OCR1A = map(angle, 0, 180, SERVO_MIN, SERVO_MAX); // Calculate PWM
         PORTB &= ~(1 << PORTB5); // Turn LED OFF (PB5)
     }
 }
@@ -284,15 +289,49 @@ void setup(){
       while (1);
   }
 
-  // Set sensor full-scale ranges
+switch(gyroRange){
+    case(250):
+      mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
+      GYRO_SENSITIVITY = 131;
+    
+    case(500):
+      mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_500);
+      ACCEL_SENSITIVITY = 65.5;
+    
+    case(1000):
+      mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_1000);
+      ACCEL_SENSITIVITY = 32.8;
+    
+    case(2000):
+       mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_2000);
+       ACCEL_SENSITIVITY = 16.4;
+    
+  }
+
   mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
-  mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2);
+  switch(accRange){
+    case(2):
+      mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2); // +-2g (16384 LSB/g)
+      ACCEL_SENSITIVITY = 16384;
+    case(4):
+      mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_4);  // +-4g (8192 LSB/g)
+      ACCEL_SENSITIVITY = 8192;
+    case(8):
+      mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_8);  // +-8g (4096 LSB/g)
+      ACCEL_SENSITIVITY = 4096;
+    case(16):
+       mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_16); // +-2g (2048 LSB/g)
+       ACCEL_SENSITIVITY = 2043;
+    
+  }
 
   lastTimeOrientation = ms();
   lastDistanceTime = ms();
   lastOutputTime = ms();
 
   calibrate_accelerometer();
+
+
 }
 
 void loop(){
@@ -386,19 +425,26 @@ void loop(){
   // LED intensity based on x acceleration
   write_led(led_brightness(ax_corr)); 
 
+  static unsigned long lastSampleTime = ms();
+  unsigned long timeNow = ms();
+
+  double dist = (timeNow - lastSampleTime) / 1000.0; // in seconds
+  lastSampleTime = timeNow;
+
+  if (fabs(ax_corr) < 0.02) ax_corr = 0;
+  double p = (0.5 * ax_corr * 9.80665 * (dist * dist)) * 100;  // now in cm
+  x = x + p;
+
   // --- Output Data Once Per Second ---
   if (counter >= 50) {
       counter = 0;
-      // print_message("Roll: "); print_number(fusedRoll * RAD_TO_DEG);
-      // print_message("\tPitch: "); print_number(fusedPitch * RAD_TO_DEG);
+      print_message("Roll: "); print_number(fusedRoll * RAD_TO_DEG);
+      print_message("\tPitch: "); print_number(fusedPitch * RAD_TO_DEG);
       print_message("\t AccX: "); print_number(ax_corr);
       print_message("\t Yaw: "); print_number(yaw_deg);
-      print_message("\t millis: "); print_number(millis());
-      print_message("\t ours: "); print_number(ms());
-      print_message("\n");
-      // print_message("\tAccY: "); print_number(ay_corr);
-      // print_message("\tAccZ: "); print_number(az_corr);
-      // print_message("\tDistance X: "); print_number(distanceX);
-      // print_message(" cm\n");
+      print_message("\tAccY: "); print_number(ay_corr);
+      print_message("\tAccZ: "); print_number(az_corr);
+      print_message("\tDistance X: "); print_number(x);
+      print_message(" cm\n");
   }
 }
