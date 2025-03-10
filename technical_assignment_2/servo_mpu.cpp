@@ -105,6 +105,8 @@ float g_sensor_x, g_sensor_y, g_sensor_z;
 float ax_lin, ay_lin;
 float a_world_x;
 
+int16_t ax, ay, az, gx, gy, gz;
+
 // --- Accelerometer Calibration (X-axis) ---
 void calibrate_accelerometer() {
     
@@ -121,6 +123,76 @@ void calibrate_accelerometer() {
     accelBiasX = sumX / numSamples;
     print_message("Calibrated accelBiasX: ");
     Serial.println(accelBiasX, 4);
+}
+
+// Correct accelerometer readings (in g's)
+void corr_accel_readings() {
+
+    ax_corr = (ax / ACCEL_SENSITIVITY) - accelBiasX;
+    ay_corr = (ay / ACCEL_SENSITIVITY);
+    az_corr = (az / ACCEL_SENSITIVITY);
+}
+
+// Gyro readings in deg/s, convert to rad/s
+void corr_gyro_readings() {
+    gyroX = (gx / GYRO_SENSITIVITY) * RADS;
+    gyroY = (gy / GYRO_SENSITIVITY) * RADS;
+    gyroZ = (gz / GYRO_SENSITIVITY) * RADS;
+}
+
+// Compute accelerometer-based angles (in radians)
+void compute_angles() {
+    accRoll = atan2(ay_corr, az_corr);
+    accPitch = atan2(-ax_corr, sqrt(ay_corr * ay_corr + az_corr * az_corr));
+}
+
+// --- Sensor Fusion for Displacement ---
+void sensor_fusion() {
+
+    // Convert corrected accelerometer readings to m/s²
+    ax_mps2 = ax_corr * 9.81;
+    ay_mps2 = ay_corr * 9.81;
+    az_mps2 = az_corr * 9.81;
+
+    // Compute expected gravity vector in sensor frame from fused roll and pitch
+    g_sensor_x = -sin(fusedPitch) * 9.81;
+    g_sensor_y = sin(fusedRoll) * cos(fusedPitch) * 9.81;
+    g_sensor_z = cos(fusedRoll) * cos(fusedPitch) * 9.81;
+
+    // Subtract gravity to obtain linear acceleration (sensor frame)
+    ax_lin = ax_mps2 - g_sensor_x;
+    ay_lin = ay_mps2 - g_sensor_y;
+    // We'll use only the horizontal components for displacement
+
+    // Rotate horizontal (x-y) linear acceleration by fused yaw to align with world X–axis
+    a_world_x = ax_lin * cos(fusedYaw) - ay_lin * sin(fusedYaw);
+
+    // --- Distance Integration (Trapezoidal with Zero Velocity Update) ---
+    unsigned long currentDistanceTime = ms();
+    float dtDistance = (currentDistanceTime - lastDistanceTime) / 1000.0;
+    lastDistanceTime = currentDistanceTime;
+
+    // Integrate a_world_x to update velocity using trapezoidal rule
+    static float prevAccX = 0.0;
+    float newVelocityX = velocityX + 0.5 * (prevAccX + a_world_x) * dtDistance;
+    if (fabs(newVelocityX) < VELOCITY_THRESHOLD)
+        newVelocityX = 0.0;
+
+    // Zero velocity update: if acceleration remains near zero for a period, reset velocity
+    const float ACCEL_DRIFT_THRESHOLD = 0.05; // m/s² threshold for stationary detection
+    static float stationaryTime = 0.0;
+    if (fabs(a_world_x) < ACCEL_DRIFT_THRESHOLD)
+      stationaryTime += dtDistance;
+    else
+      stationaryTime = 0.0;
+    if (stationaryTime > 0.2) {  // if stationary for more than 0.2 seconds
+      newVelocityX = 0.0;
+    }
+
+    // Update displacement using trapezoidal integration of velocity
+    distanceX += 0.5 * (velocityX + newVelocityX) * dtDistance;
+    velocityX = newVelocityX;
+    prevAccX = a_world_x;
 }
 
 /********************************************************************************
@@ -235,22 +307,11 @@ int main() {
         if (dt <= 0) dt = 0.01;
         lastTimeOrientation = currentTime;
 
-        int16_t ax, ay, az, gx, gy, gz;
         mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
-        // Correct accelerometer readings (in g's)
-        ax_corr = (ax / ACCEL_SENSITIVITY) - accelBiasX;
-        ay_corr = (ay / ACCEL_SENSITIVITY);
-        az_corr = (az / ACCEL_SENSITIVITY);
-
-        // Gyro readings in deg/s, convert to rad/s
-        gyroX = (gx / GYRO_SENSITIVITY) * RADS;
-        gyroY = (gy / GYRO_SENSITIVITY) * RADS;
-        gyroZ = (gz / GYRO_SENSITIVITY) * RADS;
-
-        // Compute accelerometer-based angles (in radians)
-        accRoll = atan2(ay_corr, az_corr);
-        accPitch = atan2(-ax_corr, sqrt(ay_corr * ay_corr + az_corr * az_corr));
+        corr_accel_readings();
+        corr_gyro_readings();
+        compute_angles();
 
         // Complementary filter for roll and pitch; integrate gyro for yaw
         if (firstOrientation) {
@@ -268,51 +329,7 @@ int main() {
         yaw_deg = fusedYaw * RADS;   
         setServoAngle(yaw_deg);
 
-        // --- Sensor Fusion for Displacement ---
-        // Convert corrected accelerometer readings to m/s²
-        ax_mps2 = ax_corr * 9.81;
-        ay_mps2 = ay_corr * 9.81;
-        az_mps2 = az_corr * 9.81;
-
-        // Compute expected gravity vector in sensor frame from fused roll and pitch
-        g_sensor_x = -sin(fusedPitch) * 9.81;
-        g_sensor_y = sin(fusedRoll) * cos(fusedPitch) * 9.81;
-        g_sensor_z = cos(fusedRoll) * cos(fusedPitch) * 9.81;
-
-        // Subtract gravity to obtain linear acceleration (sensor frame)
-        ax_lin = ax_mps2 - g_sensor_x;
-        ay_lin = ay_mps2 - g_sensor_y;
-        // We'll use only the horizontal components for displacement
-
-        // Rotate horizontal (x-y) linear acceleration by fused yaw to align with world X–axis
-        a_world_x = ax_lin * cos(fusedYaw) - ay_lin * sin(fusedYaw);
-
-        // --- Distance Integration (Trapezoidal with Zero Velocity Update) ---
-        unsigned long currentDistanceTime = ms();
-        float dtDistance = (currentDistanceTime - lastDistanceTime) / 1000.0;
-        lastDistanceTime = currentDistanceTime;
-
-        // Integrate a_world_x to update velocity using trapezoidal rule
-        static float prevAccX = 0.0;
-        float newVelocityX = velocityX + 0.5 * (prevAccX + a_world_x) * dtDistance;
-        if (fabs(newVelocityX) < VELOCITY_THRESHOLD)
-            newVelocityX = 0.0;
-
-        // Zero velocity update: if acceleration remains near zero for a period, reset velocity
-        const float ACCEL_DRIFT_THRESHOLD = 0.05; // m/s² threshold for stationary detection
-        static float stationaryTime = 0.0;
-        if (fabs(a_world_x) < ACCEL_DRIFT_THRESHOLD)
-          stationaryTime += dtDistance;
-        else
-          stationaryTime = 0.0;
-        if (stationaryTime > 0.2) {  // if stationary for more than 0.2 seconds
-          newVelocityX = 0.0;
-        }
-
-        // Update displacement using trapezoidal integration of velocity
-        distanceX += 0.5 * (velocityX + newVelocityX) * dtDistance;
-        velocityX = newVelocityX;
-        prevAccX = a_world_x;
+        sensor_fusion();
 
         // --- Output Data Once Per Second ---
         if (counter >= 50) {
