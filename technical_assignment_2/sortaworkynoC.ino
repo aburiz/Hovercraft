@@ -2,15 +2,15 @@
 #include <Servo.h>
 #include "MPU6050.h"
 
-// --- Pin definitions based on controller pinout ---
+// Pin definitions based on controller pinout 
 // Servo motor control: Controller P9 -> Arduino digital pin 9 (PWM)
 #define SERVO_PIN 9  
 // LED "L" / D3 for brightness control: Controller D3 -> Arduino digital pin 3 (PWM)
 #define LED_PIN 11    
 
-// --- Constants for servo control and LED brightness ---
-#define YAW_MAX 81   // Maximum allowed yaw angle (degrees)
-#define YAW_MIN -81  // Minimum allowed yaw angle (degrees)
+// Constants for servo control and LED brightness 
+#define YAW_MAX 81   // Maximum allowed yaw angle in degrees
+#define YAW_MIN -81  // Minimum allowed yaw angle in degrees
 
 #define ACC_THRESHOLD_LOW  0.12   // g: below this, LED off
 #define ACC_THRESHOLD_HIGH 1.12    // g: above this, LED full on
@@ -49,7 +49,7 @@ void setup() {
     while (1);
   }
   
-  // --- Configure full-scale ranges and sample rates (adjust per experiment) ---
+  // Configure full-scale ranges and sample rates (adjust per experiment)
   // For example, to set gyro to ±250°/sec and accelerometer to ±2g:
   mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
   mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2);
@@ -82,17 +82,17 @@ void loop() {
   float gyroY = gy / GYRO_SENSITIVITY;
   float gyroZ = gz / GYRO_SENSITIVITY;
   
-  // Compute roll and pitch from accelerometer (in degrees)
+  // Compute roll and pitch from accelerometer in degrees
   float roll  = atan2(accelY, accelZ) * 180.0 / PI;
   float pitch = atan(-accelX / sqrt(accelY * accelY + accelZ * accelZ)) * 180.0 / PI;
   
-  // --- Yaw calculation via integration of gyroZ ---
+  // Yaw calculation via integration of gyroZ 
   unsigned long currentGyroTime = millis();
   float dtGyro = (currentGyroTime - lastGyroTime) / 1000.0;
   lastGyroTime = currentGyroTime;
   yaw += gyroZ * dtGyro;  // simple integration
   
-  // --- Servo control based on yaw ---
+  // Servo control based on yaw 
   // Constrain yaw to the ±81° range for servo actuation
   float servoYaw = yaw;
   bool outOfRange = false;
@@ -108,7 +108,7 @@ void loop() {
   int servoAngle = map(servoYaw, YAW_MIN, YAW_MAX, 0, 180);
   servo.write(servoAngle);
   
-  // --- LED (D3) brightness control based on X-axis acceleration ---
+  // LED (D3) brightness control based on X-axis acceleration 
   // If yaw is out-of-range, override by turning LED fully on
   if (outOfRange) {
     analogWrite(LED_PIN, 255);
@@ -127,7 +127,7 @@ void loop() {
     analogWrite(LED_PIN, brightness);
   }
   
-  // --- Distance calculation along X-axis ---
+  // Distance calculation along X-axis 
   unsigned long currentDistanceTime = millis();
   float dtDistance = (currentDistanceTime - lastDistanceTime) / 1000.0;
   lastDistanceTime = currentDistanceTime;
