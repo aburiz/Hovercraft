@@ -332,9 +332,10 @@ void loop(){
       fusedYaw = fusedYaw + gyroZ * dt;  // Yaw from gyro integration only
   }
 
-  // --- Servo Control Based on Yaw ---
-  float yaw_deg = fusedYaw * RAD_TO_DEG;   
-  setServoAngle(yaw_deg);
+// --- Servo Control Based on Yaw ---
+  float yaw_deg = fusedYaw * RAD_TO_DEG;
+  servo_angle = yaw_deg + 90;
+  setServoAngle(servo_angle);
 
   // --- Sensor Fusion for Displacement ---
   // Convert corrected accelerometer readings to m/s²
