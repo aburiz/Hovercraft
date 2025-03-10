@@ -5,18 +5,18 @@
 #define SERVO_PIN 9    // Servo motor control (Controller P9)
 #define LED_PIN 3      // LED "L" / D3 for brightness control
 
-#define YAW_MAX 81   // Maximum allowed yaw (degrees)
-#define YAW_MIN -81  // Minimum allowed yaw (degrees)
+#define YAW_MAX 81   // Maximum allowed yaw in degrees
+#define YAW_MIN -81  // Minimum allowed yaw in degrees
 #define ACC_THRESHOLD_LOW  0.12   // Below this (g): LED off
 #define ACC_THRESHOLD_HIGH 1.12    // Above this (g): LED fully on
 
-// --- Sensor conversion factors ---
+// Sensor conversion factors 
 #define ACCEL_SENSITIVITY 16384.0  // For ±2g mode (LSB/g)
-#define GYRO_SENSITIVITY  131.0     // For ±250°/sec mode (LSB/(°/sec))
+#define GYRO_SENSITIVITY  131.0     // For ±250degree/sec mode (LSB/(degree/sec))
 
-// --- Filter and integration constants ---
+// Filter and integration constants 
 const float compFilterAlpha = 0.98;  // Complementary filter weight for gyro
-const float VELOCITY_THRESHOLD = 0.01;     // Deadband for velocity (m/s)
+const float VELOCITY_THRESHOLD = 0.01;     // Deadband for velocity in m/s
 
 MPU6050 mpu;
 Servo servo;
@@ -31,7 +31,7 @@ float distanceX = 0.0;
 float velocityX = 0.0;
 unsigned long lastDistanceTime = 0;
 
-// Accelerometer bias for X axis (in g's)
+// Accelerometer bias for X axis in g's
 float accelBiasX = 0.0;
 
 // Output interval (ms)
@@ -59,7 +59,7 @@ void setup() {
   lastDistanceTime = millis();
   lastOutputTime = millis();
 
-  // --- Accelerometer Calibration (X-axis) ---
+  // Accelerometer Calibration (X-axis) 
   const int numSamples = 100;
   float sumX = 0.0;
   for (int i = 0; i < numSamples; i++) {
@@ -75,7 +75,7 @@ void setup() {
 }
 
 void loop() {
-  // --- Orientation Update ---
+  // Orientation Update 
   unsigned long currentTime = millis();
   float dt = (currentTime - lastTimeOrientation) / 1000.0;
   if (dt <= 0) dt = 0.01;
@@ -98,7 +98,7 @@ void loop() {
   float accRoll = atan2(ay_corr, az_corr);
   float accPitch = atan2(-ax_corr, sqrt(ay_corr * ay_corr + az_corr * az_corr));
 
-  // Complementary filter for roll and pitch; integrate gyro for yaw
+  // Complementary filter for roll and pitch, integrate gyro for yaw
   if (firstOrientation) {
     fusedRoll = accRoll;
     fusedPitch = accPitch;
@@ -110,7 +110,7 @@ void loop() {
     fusedYaw = fusedYaw + gyroZ * dt;  // Yaw from gyro integration only
   }
 
-  // --- Servo Control Based on Yaw ---
+  // Servo Control Based on Yaw 
   float yaw_deg = fusedYaw * RAD_TO_DEG;
   float servoYaw = yaw_deg;
   bool outOfRange = false;
@@ -124,7 +124,7 @@ void loop() {
   int servoAngle = map(servoYaw, YAW_MIN, YAW_MAX, 0, 180);
   servo.write(servoAngle);
 
-  // --- LED Brightness Control (using raw X-axis acceleration) ---
+  // LED Brightness Control (using raw X-axis acceleration) 
   if (outOfRange) {
     analogWrite(LED_PIN, 255);
   } else {
@@ -139,7 +139,7 @@ void loop() {
     analogWrite(LED_PIN, brightness);
   }
 
-  // --- Sensor Fusion for Displacement ---
+  // Sensor Fusion for Displacement 
   // Convert corrected accelerometer readings to m/s²
   float ax_mps2 = ax_corr * 9.81;
   float ay_mps2 = ay_corr * 9.81;
@@ -158,7 +158,7 @@ void loop() {
   // Rotate horizontal (x-y) linear acceleration by fused yaw to align with world X–axis
   float a_world_x = ax_lin * cos(fusedYaw) - ay_lin * sin(fusedYaw);
 
-  // --- Distance Integration (Trapezoidal with Zero Velocity Update) ---
+  // Distance Integration (Trapezoidal with Zero Velocity Update) 
   unsigned long currentDistanceTime = millis();
   float dtDistance = (currentDistanceTime - lastDistanceTime) / 1000.0;
   lastDistanceTime = currentDistanceTime;
@@ -185,7 +185,7 @@ void loop() {
   velocityX = newVelocityX;
   prevAccX = a_world_x;
 
-  // --- Output Data Once Per Second ---
+  // Output Data Once Per Second 
   if (millis() - lastOutputTime >= OUTPUT_INTERVAL) {
     lastOutputTime = millis();
     Serial.print("Roll: "); Serial.print(fusedRoll * RAD_TO_DEG, 2);
