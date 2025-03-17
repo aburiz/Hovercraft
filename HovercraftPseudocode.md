@@ -4,7 +4,7 @@
 - we should develop an accurate coordinate system for body and inertial reference frames (to not backtrack etc.)
 - PI controller for yaw angle
 - always following path to longest distance
-####Scanning
+#### Scanning
 - stop lift and thrust fans before scanning (put US on servo)
 **deciding where to turn**:
 - var maxDistance
@@ -18,7 +18,7 @@
 - interrupt for scanning, whenever linear acceleration in all directions = 0 (stuck)
 
 
-####Edge cases:
+#### Edge cases:
 - Same distance on both sides of hovercraft
 - Out of range (too close) for US, blocked by wall
 - Turning 180º and turning back 
