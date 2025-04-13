@@ -1,0 +1,323 @@
+#include <Wire.h>
+#include <Servo.h>
+#include <MPU6050.h>
+
+#define DEBUG 1  // Set to 1 for debugging prints, 0 to disable
+
+// ----- Create objects -----
+MPU6050 mpu;
+Servo thrustServo;
+
+// ----- Global Calibration Variable -----
+float gyroZBias = 0.0;  // Bias for the Z-axis gyro
+
+// ----- Pin Definitions -----
+// Front sensor: TRIG on D13 (PORTB, bit 5), ECHO on D3
+const uint8_t FRONT_ECHO_PIN = 3;   // D3
+
+// Upward sensor: TRIG on D11 (PORTB, bit 3), ECHO on D2
+const uint8_t UP_ECHO_PIN = 2;      // D2
+
+// Fan control pins
+// Note: For PWM control the thrust fan must be attached to a PWM-capable pin.
+const uint8_t THRUST_FAN_PIN = 6;   // D4 (ensure D4 is PWM-capable on your board)
+const uint8_t LIFT_FAN_PIN   = 7;   // D7
+
+// Servo control pin (HS‑422)
+const uint8_t SERVO_PIN = 9;        // D9
+
+// ----- Thrust Fan Speed Settings -----
+// PWM values (0-255)
+const int DEFAULT_THRUST_FAN_SPEED = 210;   // Full speed in normal operation
+const int TURN_THRUST_FAN_SPEED    = 150;     // Reduced speed during turns (adjust as needed)
+
+// ----- Configuration -----
+// Distances in cm
+const int WALL_THRESHOLD = 15;     // If front sensor reads less than 15 cm, a wall is detected.
+const int BAR_THRESHOLD  = 15;     // If upward sensor reads less than 15 cm, the bar is detected.
+
+// Servo angles (using full 0-180 for maximum turning force)
+const int SERVO_NEUTRAL = 93;      // Neutral position
+#define SERVO_LEFT   45           // Left extreme
+#define SERVO_RIGHT  135         // Right extreme
+
+// Turning settings (for IMU-assisted turns)
+const float TARGET_TURN_ANGLE = 180.0;         // degrees for a turn
+const unsigned long TURN_TIMEOUT_MS = 3700;   // Maximum allowed time for a turn
+const unsigned long TURN_COOLDOWN_MS = 1000;     // Cooldown between turns
+
+// Extra turn hold delay (in ms) after the turn completes.
+const unsigned long TURN_HOLD_DELAY_MS = 300;   // Adjust as needed
+
+// ----- Drift Correction Variables -----
+float heading = 0.0;             // Integrated yaw drift (degrees)
+unsigned long lastDriftTime = 0; // Timestamp for drift integration
+float lastYawRate = 0.0;         // For low-pass filtering the gyro reading
+const float DRIFT_CORRECTION_GAIN = 2.0;  // Adjust to scale correction
+
+// Timing variables for turn integration
+unsigned long lastTurnTime = 0;  // Enforce a cooldown between turns
+unsigned long prevTurnTime = 0;  // For integration during a turn
+
+// ----- Function: Calibrate the MPU6050 Gyro Z Bias -----
+// Samples the gyro when the craft is stationary and averages the readings.
+float calibrateGyroZ() {
+  const int samples = 500;
+  float sum = 0.0;
+  for (int i = 0; i < samples; i++) {
+    int16_t gx, gy, gz;
+    mpu.getRotation(&gx, &gy, &gz);
+    // Convert raw Z-axis reading to degrees per second.
+    float rate = gz / 131.0;
+    sum += rate;
+    delay(5);
+  }
+  float bias = sum / samples;
+#if DEBUG
+  Serial.print("Gyro Z Bias: ");
+  Serial.println(bias);
+#endif
+  return bias;
+}
+
+// ----- Inline functions for fast ultrasonic triggers -----
+// For front sensor: TRIG on D13 (PORTB, bit 5)
+inline void triggerPulseFront() {
+  PORTB &= ~(1 << PB5);   // Clear bit PB5 (D13)
+  delayMicroseconds(2);
+  PORTB |= (1 << PB5);    // Set bit PB5
+  delayMicroseconds(10);
+  PORTB &= ~(1 << PB5);
+}
+
+// For upward sensor: TRIG on D11 (PORTB, bit 3)
+inline void triggerPulseUp() {
+  PORTB &= ~(1 << PB3);   // Clear bit PB3 (D11)
+  delayMicroseconds(2);
+  PORTB |= (1 << PB3);    // Set bit PB3
+  delayMicroseconds(10);
+  PORTB &= ~(1 << PB3);
+}
+
+// ----- Distance Measurement -----
+long measureDistanceFront() {
+  triggerPulseFront();
+  long duration = pulseIn(FRONT_ECHO_PIN, HIGH, 30000); // Timeout of 30ms
+  return duration * 0.034 / 2;  // Convert microseconds to centimeters.
+}
+
+long measureDistanceUp() {
+  triggerPulseUp();
+  long duration = pulseIn(UP_ECHO_PIN, HIGH, 30000);
+  return duration * 0.034 / 2;
+}
+
+// ----- Full-Range Path Scanning -----
+// Sweeps the servo from 0° to 180° in steps and returns the angle with the best opening.
+void scanForOpenPath(int &chosenAngle) {
+  const int step = 15;  // Step size in degrees.
+  int bestAngle = SERVO_NEUTRAL;
+  long bestDistance = 0;
+  
+  // Increase delay for a longer, more accurate scan.
+  for (int angle = 0; angle <= 180; angle += step) {
+    thrustServo.write(angle);
+    delay(150);  // Adjust as needed for accuracy.
+    long distance = measureDistanceFront();
+#if DEBUG
+    Serial.print("Angle: ");
+    Serial.print(angle);
+    Serial.print(" -> Distance: ");
+    Serial.println(distance);
+#endif
+    if (distance > bestDistance) {
+      bestDistance = distance;
+      bestAngle = angle;
+    }
+  }
+  
+  thrustServo.write(SERVO_NEUTRAL);
+  delay(20);  // Short delay after scanning.
+  chosenAngle = bestAngle;
+#if DEBUG
+  Serial.print("Chosen angle: ");
+  Serial.println(chosenAngle);
+#endif
+}
+
+// ----- Turn Integration -----
+void resetTurnIntegration() {
+  prevTurnTime = millis();
+  heading = 0.0;
+}
+
+void turnUsingIMU(int direction) {
+#if DEBUG
+  Serial.println("Starting turn...");
+#endif
+  resetTurnIntegration();
+  
+  // Set the servo to the desired turn position.
+  thrustServo.write((direction > 0) ? SERVO_RIGHT : SERVO_LEFT);
+  delay(50);
+  
+  // Set the thrust fan speed for the turn.
+  analogWrite(THRUST_FAN_PIN, TURN_THRUST_FAN_SPEED);
+  
+  unsigned long turnStart = millis();
+  while (abs(heading) < TARGET_TURN_ANGLE && (millis() - turnStart < TURN_TIMEOUT_MS)) {
+    unsigned long now = millis();
+    float dt = (now - prevTurnTime) / 1000.0;
+    prevTurnTime = now;
+    
+    int16_t gx, gy, gz;
+    mpu.getRotation(&gx, &gy, &gz);
+    // Subtract the bias from the gyro reading.
+    float angularRate = (gz / 131.0) - gyroZBias;
+    heading += angularRate * dt;
+    
+    delay(5);
+  }
+  
+  // Extra hold delay after completing the turn.
+  delay(TURN_HOLD_DELAY_MS);
+  
+#if DEBUG
+  Serial.println("Turn complete.");
+#endif
+  
+  // Reset the servo to neutral.
+  thrustServo.write(SERVO_NEUTRAL);
+  delay(50);
+  
+  // Restore thrust fan speed to default.
+  analogWrite(THRUST_FAN_PIN, DEFAULT_THRUST_FAN_SPEED);
+  
+  // Reset drift variables after the turn.
+  heading = 0.0;
+  lastDriftTime = millis();
+  lastTurnTime = millis();
+}
+
+// ----- Drift Correction Using Full Servo Range -----
+// Reads the gyro, applies bias correction, and adjusts the servo from 0 to 180 accordingly.
+void updateDriftCorrection() {
+  unsigned long now = millis();
+  float dt = (now - lastDriftTime) / 1000.0;
+  lastDriftTime = now;
+  
+  int16_t gx, gy, gz;
+  mpu.getRotation(&gx, &gy, &gz);
+  float rawYawRate = (gz / 131.0) - gyroZBias;  // Subtract bias.
+  float filteredYawRate = 0.9 * rawYawRate + 0.1 * lastYawRate;
+  lastYawRate = filteredYawRate;
+  
+  // Integrate with decay to prevent runaway accumulation.
+  heading = heading * 0.99 + filteredYawRate * dt;
+  
+  // Calculate correction to aim for a heading of 0.
+  float error = -heading;
+  float correction = error * DRIFT_CORRECTION_GAIN;
+  
+  // Compute the new servo angle.
+  int correctedAngle = SERVO_NEUTRAL + (int)correction;
+  
+  // Clamp the angle within [0, 180].
+  if (correctedAngle < 0)   correctedAngle = 0;
+  if (correctedAngle > 180) correctedAngle = 180;
+  
+  thrustServo.write(correctedAngle);
+  
+#if DEBUG
+  Serial.print("Heading: ");
+  Serial.print(heading);
+  Serial.print(" | Correction: ");
+  Serial.print(correction);
+  Serial.print(" | Servo Angle: ");
+  Serial.println(correctedAngle);
+#endif
+}
+
+void setup() {
+#if DEBUG
+  Serial.begin(9600);
+#endif
+  Wire.begin();
+  mpu.initialize();
+  
+  // Allow the MPU6050 time to stabilize.
+  delay(1000);
+  // Calibrate the gyro (ensure craft is stationary).
+  gyroZBias = calibrateGyroZ();
+  
+  thrustServo.attach(SERVO_PIN);
+  thrustServo.write(SERVO_NEUTRAL);
+  
+  // Configure sensor echo pins.
+  pinMode(FRONT_ECHO_PIN, INPUT);
+  pinMode(UP_ECHO_PIN, INPUT);
+  
+  // Configure fan control pins.
+  pinMode(THRUST_FAN_PIN, OUTPUT);
+  pinMode(LIFT_FAN_PIN, OUTPUT);
+  
+  // Start the fans.
+  // Use PWM control for thrust fan.
+  analogWrite(THRUST_FAN_PIN, DEFAULT_THRUST_FAN_SPEED);
+  digitalWrite(LIFT_FAN_PIN, HIGH);
+  
+  lastDriftTime = millis();
+  lastTurnTime  = millis();
+  delay(1000);  // Allow sensors and IMU to further stabilize.
+}
+
+void loop() {
+  // ----- Overhead Bar Detection -----
+  long barDistance = measureDistanceUp();
+  if (barDistance > 0 && barDistance < BAR_THRESHOLD) {
+#if DEBUG
+    Serial.println("Bar detected! Stopping.");
+#endif
+    analogWrite(THRUST_FAN_PIN, 0);
+    digitalWrite(LIFT_FAN_PIN, LOW);
+    while (true) { delay(100); }
+  }
+  
+  // ----- Wall Detection & Turning -----
+  // Only check if the cooldown period has passed.
+  if (millis() - lastTurnTime > TURN_COOLDOWN_MS) {
+    long frontDistance = measureDistanceFront();
+#if DEBUG
+    Serial.print("Front Distance: ");
+    Serial.println(frontDistance);
+#endif
+    if (frontDistance > 0 && frontDistance < WALL_THRESHOLD) {
+#if DEBUG
+      Serial.println("Wall detected! Scanning for open path...");
+#endif
+      // Turn off both fans during the scanning phase.
+      analogWrite(THRUST_FAN_PIN, 0);
+      digitalWrite(LIFT_FAN_PIN, LOW);
+      
+      int chosenAngle = SERVO_NEUTRAL;
+      scanForOpenPath(chosenAngle);
+      
+      // Decide turn direction based on scanning result:
+      // If chosen angle > SERVO_NEUTRAL, turn right; else, turn left.
+      int turnDir = (chosenAngle > SERVO_NEUTRAL) ? 1 : -1;
+      
+      // Turn the fans back on.
+      analogWrite(THRUST_FAN_PIN, TURN_THRUST_FAN_SPEED);
+      digitalWrite(LIFT_FAN_PIN, HIGH);
+      
+      turnUsingIMU(turnDir);
+    }
+  }
+  
+  // ----- Normal Forward Movement with Drift Correction -----
+  // Set thrust fan to default full speed for normal operation.
+  analogWrite(THRUST_FAN_PIN, DEFAULT_THRUST_FAN_SPEED);
+  updateDriftCorrection();
+  
+  delay(50);
+}
